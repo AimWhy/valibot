@@ -1,63 +1,278 @@
 import { describe, expect, test } from 'vitest';
-import { type ValiError } from '../../error/index.ts';
-import { parse } from '../../methods/index.ts';
+import type { FailureDataset, InferIssue } from '../../types/index.ts';
+import { expectNoSchemaIssue, expectSchemaIssue } from '../../vitest/index.ts';
+import { nullish } from '../nullish/index.ts';
 import { number } from '../number/index.ts';
-import { string } from '../string/index.ts';
-import { object } from './object.ts';
+import { optional } from '../optional/index.ts';
+import { string, type StringIssue } from '../string/index.ts';
+import { object, type ObjectSchema } from './object.ts';
+import type { ObjectIssue } from './types.ts';
 
 describe('object', () => {
-  test('should pass only objects', () => {
-    const schema = object({ key1: string(), key2: number() });
-    const input = { key1: 'test', key2: 123 };
-    const output = parse(schema, input);
-    expect(output).toEqual(input);
-    expect(() => parse(schema, 'test')).toThrowError();
-    expect(() => parse(schema, 123)).toThrowError();
-    expect(() => parse(schema, {})).toThrowError();
-    expect(() => parse(schema, new Map())).toThrowError();
+  describe('should return schema object', () => {
+    const entries = { key: string() };
+    type Entries = typeof entries;
+    const baseSchema: Omit<ObjectSchema<Entries, never>, 'message'> = {
+      kind: 'schema',
+      type: 'object',
+      reference: object,
+      expects: 'Object',
+      entries,
+      async: false,
+      '~standard': {
+        version: 1,
+        vendor: 'valibot',
+        validate: expect.any(Function),
+      },
+      '~run': expect.any(Function),
+    };
+
+    test('with undefined message', () => {
+      const schema: ObjectSchema<Entries, undefined> = {
+        ...baseSchema,
+        message: undefined,
+      };
+      expect(object(entries)).toStrictEqual(schema);
+      expect(object(entries, undefined)).toStrictEqual(schema);
+    });
+
+    test('with string message', () => {
+      expect(object(entries, 'message')).toStrictEqual({
+        ...baseSchema,
+        message: 'message',
+      } satisfies ObjectSchema<Entries, 'message'>);
+    });
+
+    test('with function message', () => {
+      const message = () => 'message';
+      expect(object(entries, message)).toStrictEqual({
+        ...baseSchema,
+        message,
+      } satisfies ObjectSchema<Entries, typeof message>);
+    });
   });
 
-  test('should throw custom error', () => {
-    const error = 'Value is not an object!';
-    const schema = object({}, error);
-    expect(() => parse(schema, 123)).toThrowError(error);
+  describe('should return dataset without issues', () => {
+    test('for empty object', () => {
+      expectNoSchemaIssue(object({}), [{}]);
+    });
+
+    test('for simple object', () => {
+      expectNoSchemaIssue(object({ key1: string(), key2: number() }), [
+        { key1: 'foo', key2: 123 },
+      ]);
+    });
+
+    test('for unknown entries', () => {
+      expect(
+        object({ key1: string() })['~run'](
+          { value: { key1: 'foo', key2: 123, key3: null } },
+          {}
+        )
+      ).toStrictEqual({
+        typed: true,
+        value: { key1: 'foo' },
+      });
+    });
   });
 
-  test('should throw every issue', () => {
-    const schema = object({ 1: number(), 2: number(), 3: number() });
-    const input = { 1: '1', 2: 2, 3: '3' };
-    expect(() => parse(schema, input)).toThrowError();
-    try {
-      parse(schema, input);
-    } catch (error) {
-      expect((error as ValiError).issues.length).toBe(2);
-    }
+  describe('should return dataset with issues', () => {
+    const schema = object({}, 'message');
+    const baseIssue: Omit<ObjectIssue, 'input' | 'received'> = {
+      kind: 'schema',
+      type: 'object',
+      expected: 'Object',
+      message: 'message',
+    };
+
+    // Primitive types
+
+    test('for bigints', () => {
+      expectSchemaIssue(schema, baseIssue, [-1n, 0n, 123n]);
+    });
+
+    test('for booleans', () => {
+      expectSchemaIssue(schema, baseIssue, [true, false]);
+    });
+
+    test('for null', () => {
+      expectSchemaIssue(schema, baseIssue, [null]);
+    });
+
+    test('for numbers', () => {
+      expectSchemaIssue(schema, baseIssue, [-1, 0, 123, 45.67]);
+    });
+
+    test('for undefined', () => {
+      expectSchemaIssue(schema, baseIssue, [undefined]);
+    });
+
+    test('for strings', () => {
+      expectSchemaIssue(schema, baseIssue, ['', 'abc', '123']);
+    });
+
+    test('for symbols', () => {
+      expectSchemaIssue(schema, baseIssue, [Symbol(), Symbol('foo')]);
+    });
+
+    // Complex types
+
+    // TODO: Enable this test again in case we find a reliable way to check for
+    // plain objects
+    // test('for arrays', () => {
+    //   expectSchemaIssue(schema, baseIssue, [[], ['value']]);
+    // });
+
+    test('for functions', () => {
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      expectSchemaIssue(schema, baseIssue, [() => {}, function () {}]);
+    });
   });
 
-  test('should throw only first issue', () => {
-    const schema = object({ 1: number(), 2: number(), 3: number() });
-    const input = { 1: '1', 2: 2, 3: '3' };
-    const info = { abortEarly: true };
-    expect(() => parse(schema, input, info)).toThrowError();
-    try {
-      parse(schema, input, info);
-    } catch (error) {
-      expect((error as ValiError).issues.length).toBe(1);
-    }
+  describe('should return dataset without nested issues', () => {
+    test('for simple object', () => {
+      expectNoSchemaIssue(object({ key1: string(), key2: number() }), [
+        { key1: 'foo', key2: 123 },
+      ]);
+    });
+
+    test('for nested object', () => {
+      expectNoSchemaIssue(object({ nested: object({ key: string() }) }), [
+        { nested: { key: 'foo' } },
+      ]);
+    });
+
+    test('for optional entry', () => {
+      expectNoSchemaIssue(object({ key: optional(string()) }), [
+        {},
+        // @ts-expect-error
+        { key: undefined },
+        { key: 'foo' },
+      ]);
+    });
+
+    test('for nullish entry', () => {
+      expectNoSchemaIssue(object({ key: nullish(number()) }), [
+        {},
+        { key: undefined },
+        { key: null },
+        { key: 123 },
+      ]);
+    });
+
+    test('for unknown entries', () => {
+      expect(
+        object({ key1: string() })['~run'](
+          { value: { key1: 'foo', key2: 123, key3: null } },
+          {}
+        )
+      ).toStrictEqual({
+        typed: true,
+        value: { key1: 'foo' },
+      });
+    });
   });
 
-  test('should execute pipe', () => {
-    const input = { key1: '1', key2: 1 };
-    const transformInput = () => ({ key1: '2', key2: 2 });
-    const output1 = parse(
-      object({ key1: string(), key2: number() }, [transformInput]),
-      input
-    );
-    const output2 = parse(
-      object({ key1: string(), key2: number() }, 'Error', [transformInput]),
-      input
-    );
-    expect(output1).toEqual(transformInput());
-    expect(output2).toEqual(transformInput());
+  describe('should return dataset with nested issues', () => {
+    const schema = object({ key: string(), nested: object({ key: number() }) });
+
+    const baseInfo = {
+      message: expect.any(String),
+      requirement: undefined,
+      issues: undefined,
+      lang: undefined,
+      abortEarly: undefined,
+      abortPipeEarly: undefined,
+    };
+
+    const stringIssue: StringIssue = {
+      ...baseInfo,
+      kind: 'schema',
+      type: 'string',
+      input: undefined,
+      expected: 'string',
+      received: 'undefined',
+      path: [
+        {
+          type: 'object',
+          origin: 'value',
+          input: {},
+          key: 'key',
+          value: undefined,
+        },
+      ],
+    };
+
+    test('for missing entries', () => {
+      expect(schema['~run']({ value: {} }, {})).toStrictEqual({
+        typed: false,
+        value: {},
+        issues: [
+          stringIssue,
+          {
+            ...baseInfo,
+            kind: 'schema',
+            type: 'object',
+            input: undefined,
+            expected: 'Object',
+            received: 'undefined',
+            path: [
+              {
+                type: 'object',
+                origin: 'value',
+                input: {},
+                key: 'nested',
+                value: undefined,
+              },
+            ],
+          },
+        ],
+      } satisfies FailureDataset<InferIssue<typeof schema>>);
+    });
+
+    test('for missing nested entries', () => {
+      expect(
+        schema['~run']({ value: { key: 'value', nested: {} } }, {})
+      ).toStrictEqual({
+        typed: false,
+        value: { key: 'value', nested: {} },
+        issues: [
+          {
+            ...baseInfo,
+            kind: 'schema',
+            type: 'number',
+            input: undefined,
+            expected: 'number',
+            received: 'undefined',
+            path: [
+              {
+                type: 'object',
+                origin: 'value',
+                input: { key: 'value', nested: {} },
+                key: 'nested',
+                value: {},
+              },
+              {
+                type: 'object',
+                origin: 'value',
+                input: {},
+                key: 'key',
+                value: undefined,
+              },
+            ],
+          },
+        ],
+      } satisfies FailureDataset<InferIssue<typeof schema>>);
+    });
+
+    test('with abort early', () => {
+      expect(schema['~run']({ value: {} }, { abortEarly: true })).toStrictEqual(
+        {
+          typed: false,
+          value: {},
+          issues: [{ ...stringIssue, abortEarly: true }],
+        } satisfies FailureDataset<InferIssue<typeof schema>>
+      );
+    });
   });
 });
