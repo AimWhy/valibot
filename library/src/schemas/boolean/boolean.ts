@@ -1,77 +1,94 @@
-import { ValiError } from '../../error/index.ts';
-import type { BaseSchema, Pipe } from '../../types.ts';
-import { executePipe, getErrorAndPipe } from '../../utils/index.ts';
+import type {
+  BaseIssue,
+  BaseSchema,
+  ErrorMessage,
+  OutputDataset,
+} from '../../types/index.ts';
+import { _addIssue, _getStandardProps } from '../../utils/index.ts';
 
 /**
- * Boolean schema type.
+ * Boolean issue interface.
  */
-export type BooleanSchema<TOutput = boolean> = BaseSchema<boolean, TOutput> & {
-  schema: 'boolean';
-};
+export interface BooleanIssue extends BaseIssue<unknown> {
+  /**
+   * The issue kind.
+   */
+  readonly kind: 'schema';
+  /**
+   * The issue type.
+   */
+  readonly type: 'boolean';
+  /**
+   * The expected property.
+   */
+  readonly expected: 'boolean';
+}
+
+/**
+ * Boolean schema interface.
+ */
+export interface BooleanSchema<
+  TMessage extends ErrorMessage<BooleanIssue> | undefined,
+> extends BaseSchema<boolean, boolean, BooleanIssue> {
+  /**
+   * The schema type.
+   */
+  readonly type: 'boolean';
+  /**
+   * The schema reference.
+   */
+  readonly reference: typeof boolean;
+  /**
+   * The expected property.
+   */
+  readonly expects: 'boolean';
+  /**
+   * The error message.
+   */
+  readonly message: TMessage;
+}
 
 /**
  * Creates a boolean schema.
  *
- * @param pipe A validation and transformation pipe.
- *
  * @returns A boolean schema.
  */
-export function boolean(pipe?: Pipe<boolean>): BooleanSchema;
+export function boolean(): BooleanSchema<undefined>;
 
 /**
  * Creates a boolean schema.
  *
- * @param error The error message.
- * @param pipe A validation and transformation pipe.
+ * @param message The error message.
  *
  * @returns A boolean schema.
  */
-export function boolean(error?: string, pipe?: Pipe<boolean>): BooleanSchema;
+export function boolean<
+  const TMessage extends ErrorMessage<BooleanIssue> | undefined,
+>(message: TMessage): BooleanSchema<TMessage>;
 
+// @__NO_SIDE_EFFECTS__
 export function boolean(
-  arg1?: string | Pipe<boolean>,
-  arg2?: Pipe<boolean>
-): BooleanSchema {
-  // Get error and pipe argument
-  const { error, pipe } = getErrorAndPipe(arg1, arg2);
-
-  // Create and return boolean schema
+  message?: ErrorMessage<BooleanIssue>
+): BooleanSchema<ErrorMessage<BooleanIssue> | undefined> {
   return {
-    /**
-     * The schema type.
-     */
-    schema: 'boolean',
-
-    /**
-     * Whether it's async.
-     */
+    kind: 'schema',
+    type: 'boolean',
+    reference: boolean,
+    expects: 'boolean',
     async: false,
-
-    /**
-     * Parses unknown input based on its schema.
-     *
-     * @param input The input to be parsed.
-     * @param info The parse info.
-     *
-     * @returns The parsed output.
-     */
-    parse(input, info) {
-      // Check type of input
-      if (typeof input !== 'boolean') {
-        throw new ValiError([
-          {
-            reason: 'type',
-            validation: 'boolean',
-            origin: 'value',
-            message: error || 'Invalid type',
-            input,
-            ...info,
-          },
-        ]);
+    message,
+    get '~standard'() {
+      return _getStandardProps(this);
+    },
+    '~run'(dataset, config) {
+      if (typeof dataset.value === 'boolean') {
+        // @ts-expect-error
+        dataset.typed = true;
+      } else {
+        _addIssue(this, 'type', dataset, config);
       }
-
-      // Execute pipe and return output
-      return executePipe(input, pipe, { ...info, reason: 'boolean' });
+      // @ts-expect-error
+      return dataset as OutputDataset<boolean, BooleanIssue>;
     },
   };
 }

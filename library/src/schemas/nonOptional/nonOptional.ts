@@ -1,75 +1,108 @@
-import { ValiError } from '../../error/index.ts';
-import type { BaseSchema, Input, Output } from '../../types.ts';
+import type {
+  BaseIssue,
+  BaseSchema,
+  ErrorMessage,
+  OutputDataset,
+} from '../../types/index.ts';
+import { _addIssue, _getStandardProps } from '../../utils/index.ts';
+import type {
+  InferNonOptionalInput,
+  InferNonOptionalIssue,
+  InferNonOptionalOutput,
+  NonOptionalIssue,
+} from './types.ts';
 
 /**
- * Non optional type.
+ * Non optional schema interface.
  */
-export type NonOptional<T> = T extends undefined ? never : T;
-
-/**
- * Non optional schema type.
- */
-export type NonOptionalSchema<
-  TWrappedSchema extends BaseSchema,
-  TOutput = NonOptional<Output<TWrappedSchema>>
-> = BaseSchema<NonOptional<Input<TWrappedSchema>>, TOutput> & {
-  schema: 'non_optional';
-  wrapped: TWrappedSchema;
-};
+export interface NonOptionalSchema<
+  TWrapped extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  TMessage extends ErrorMessage<NonOptionalIssue> | undefined,
+> extends BaseSchema<
+    InferNonOptionalInput<TWrapped>,
+    InferNonOptionalOutput<TWrapped>,
+    NonOptionalIssue | InferNonOptionalIssue<TWrapped>
+  > {
+  /**
+   * The schema type.
+   */
+  readonly type: 'non_optional';
+  /**
+   * The schema reference.
+   */
+  readonly reference: typeof nonOptional;
+  /**
+   * The expected property.
+   */
+  readonly expects: '!undefined';
+  /**
+   * The wrapped schema.
+   */
+  readonly wrapped: TWrapped;
+  /**
+   * The error message.
+   */
+  readonly message: TMessage;
+}
 
 /**
  * Creates a non optional schema.
  *
  * @param wrapped The wrapped schema.
- * @param error The error message.
  *
  * @returns A non optional schema.
  */
-export function nonOptional<TWrappedSchema extends BaseSchema>(
-  wrapped: TWrappedSchema,
-  error?: string
-): NonOptionalSchema<TWrappedSchema> {
+export function nonOptional<
+  const TWrapped extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+>(wrapped: TWrapped): NonOptionalSchema<TWrapped, undefined>;
+
+/**
+ * Creates a non optional schema.
+ *
+ * @param wrapped The wrapped schema.
+ * @param message The error message.
+ *
+ * @returns A non optional schema.
+ */
+export function nonOptional<
+  const TWrapped extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  const TMessage extends ErrorMessage<NonOptionalIssue> | undefined,
+>(wrapped: TWrapped, message: TMessage): NonOptionalSchema<TWrapped, TMessage>;
+
+// @__NO_SIDE_EFFECTS__
+export function nonOptional(
+  wrapped: BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  message?: ErrorMessage<NonOptionalIssue> | undefined
+): NonOptionalSchema<
+  BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  ErrorMessage<NonOptionalIssue> | undefined
+> {
   return {
-    /**
-     * The schema type.
-     */
-    schema: 'non_optional',
-
-    /**
-     * The wrapped schema.
-     */
-    wrapped,
-
-    /**
-     * Whether it's async.
-     */
+    kind: 'schema',
+    type: 'non_optional',
+    reference: nonOptional,
+    expects: '!undefined',
     async: false,
-
-    /**
-     * Parses unknown input based on its schema.
-     *
-     * @param input The input to be parsed.
-     * @param info The parse info.
-     *
-     * @returns The parsed output.
-     */
-    parse(input, info) {
-      // Allow `undefined` values not to pass
-      if (input === undefined) {
-        throw new ValiError([
-          {
-            reason: 'type',
-            validation: 'non_optional',
-            origin: 'value',
-            message: error || 'Invalid type',
-            input,
-            ...info,
-          },
-        ]);
+    wrapped,
+    message,
+    get '~standard'() {
+      return _getStandardProps(this);
+    },
+    '~run'(dataset, config) {
+      // If value is not `undefined`, run wrapped schema
+      if (dataset.value !== undefined) {
+        // @ts-expect-error
+        dataset = this.wrapped['~run'](dataset, config);
       }
 
-      // Parse wrapped schema and return output
-      return wrapped.parse(input, info);
+      // If value is `undefined`, add issue to dataset
+      if (dataset.value === undefined) {
+        _addIssue(this, 'type', dataset, config);
+      }
+
+      // Return output dataset
+      // @ts-expect-error
+      return dataset as OutputDataset<unknown, BaseIssue<unknown>>;
     },
   };
 }

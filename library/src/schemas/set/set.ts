@@ -1,135 +1,163 @@
-import { type Issue, type Issues, ValiError } from '../../error/index.ts';
-import type { BaseSchema, Pipe } from '../../types.ts';
-import {
-  executePipe,
-  getCurrentPath,
-  getErrorAndPipe,
-} from '../../utils/index.ts';
-import type { SetInput, SetOutput } from './types.ts';
+import type {
+  BaseIssue,
+  BaseSchema,
+  ErrorMessage,
+  InferIssue,
+  OutputDataset,
+  SetPathItem,
+} from '../../types/index.ts';
+import { _addIssue, _getStandardProps } from '../../utils/index.ts';
+import type { InferSetInput, InferSetOutput, SetIssue } from './types.ts';
 
 /**
- * Set schema type.
+ * Set schema interface.
  */
-export type SetSchema<
-  TSetValue extends BaseSchema,
-  TOutput = SetOutput<TSetValue>
-> = BaseSchema<SetInput<TSetValue>, TOutput> & {
-  schema: 'set';
-  set: { value: TSetValue };
-};
+export interface SetSchema<
+  TValue extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  TMessage extends ErrorMessage<SetIssue> | undefined,
+> extends BaseSchema<
+    InferSetInput<TValue>,
+    InferSetOutput<TValue>,
+    SetIssue | InferIssue<TValue>
+  > {
+  /**
+   * The schema type.
+   */
+  readonly type: 'set';
+  /**
+   * The schema reference.
+   */
+  readonly reference: typeof set;
+  /**
+   * The expected property.
+   */
+  readonly expects: 'Set';
+  /**
+   * The set value schema.
+   */
+  readonly value: TValue;
+  /**
+   * The error message.
+   */
+  readonly message: TMessage;
+}
 
 /**
  * Creates a set schema.
  *
  * @param value The value schema.
- * @param pipe A validation and transformation pipe.
  *
  * @returns A set schema.
  */
-export function set<TSetValue extends BaseSchema>(
-  value: TSetValue,
-  pipe?: Pipe<SetOutput<TSetValue>>
-): SetSchema<TSetValue>;
+export function set<
+  const TValue extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+>(value: TValue): SetSchema<TValue, undefined>;
 
 /**
  * Creates a set schema.
  *
  * @param value The value schema.
- * @param error The error message.
- * @param pipe A validation and transformation pipe.
+ * @param message The error message.
  *
  * @returns A set schema.
  */
-export function set<TSetValue extends BaseSchema>(
-  value: TSetValue,
-  error?: string,
-  pipe?: Pipe<SetOutput<TSetValue>>
-): SetSchema<TSetValue>;
+export function set<
+  const TValue extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  const TMessage extends ErrorMessage<SetIssue> | undefined,
+>(value: TValue, message: TMessage): SetSchema<TValue, TMessage>;
 
-export function set<TSetValue extends BaseSchema>(
-  value: TSetValue,
-  arg2?: Pipe<SetOutput<TSetValue>> | string,
-  arg3?: Pipe<SetOutput<TSetValue>>
-): SetSchema<TSetValue> {
-  // Get error and pipe argument
-  const { error, pipe } = getErrorAndPipe(arg2, arg3);
-
-  // Create and return set schema
+// @__NO_SIDE_EFFECTS__
+export function set(
+  value: BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  message?: ErrorMessage<SetIssue>
+): SetSchema<
+  BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  ErrorMessage<SetIssue> | undefined
+> {
   return {
-    /**
-     * The schema type.
-     */
-    schema: 'set',
-
-    /**
-     * The set value schema.
-     */
-    set: { value },
-
-    /**
-     * Whether it's async.
-     */
+    kind: 'schema',
+    type: 'set',
+    reference: set,
+    expects: 'Set',
     async: false,
+    value,
+    message,
+    get '~standard'() {
+      return _getStandardProps(this);
+    },
+    '~run'(dataset, config) {
+      // Get input value from dataset
+      const input = dataset.value;
 
-    /**
-     * Parses unknown input based on its schema.
-     *
-     * @param input The input to be parsed.
-     * @param info The parse info.
-     *
-     * @returns The parsed output.
-     */
-    parse(input, info) {
-      // Check type of input
-      if (!(input instanceof Set)) {
-        throw new ValiError([
-          {
-            reason: 'type',
-            validation: 'set',
-            origin: 'value',
-            message: error || 'Invalid type',
-            input,
-            ...info,
-          },
-        ]);
-      }
+      // If root type is valid, check nested types
+      if (input instanceof Set) {
+        // Set typed to `true` and value to empty set
+        // @ts-expect-error
+        dataset.typed = true;
+        dataset.value = new Set();
 
-      // Create index, output and issues
-      let index = 0;
-      const output: SetOutput<TSetValue> = new Set();
-      const issues: Issue[] = [];
-
-      // Parse each value by schema
-      for (const inputValue of input) {
-        try {
-          output.add(
-            value.parse(inputValue, {
-              ...info,
-              path: getCurrentPath(info, {
-                schema: 'set',
-                input,
-                key: index++,
-                value: inputValue,
-              }),
-            })
+        // Parse schema of each set value
+        for (const inputValue of input) {
+          const valueDataset = this.value['~run'](
+            { value: inputValue },
+            config
           );
 
-          // Throw or fill issues in case of an error
-        } catch (error) {
-          if (info?.abortEarly) {
-            throw error;
+          // If there are issues, capture them
+          if (valueDataset.issues) {
+            // Create set path item
+            const pathItem: SetPathItem = {
+              type: 'set',
+              origin: 'value',
+              input,
+              key: null,
+              value: inputValue,
+            };
+
+            // Add modified item dataset issues to issues
+            for (const issue of valueDataset.issues) {
+              if (issue.path) {
+                issue.path.unshift(pathItem);
+              } else {
+                // @ts-expect-error
+                issue.path = [pathItem];
+              }
+              // @ts-expect-error
+              dataset.issues?.push(issue);
+            }
+            if (!dataset.issues) {
+              // @ts-expect-error
+              dataset.issues = valueDataset.issues;
+            }
+
+            // If necessary, abort early
+            if (config.abortEarly) {
+              dataset.typed = false;
+              break;
+            }
           }
-          issues.push(...(error as ValiError).issues);
+
+          // If not typed, set typed to `false`
+          if (!valueDataset.typed) {
+            dataset.typed = false;
+          }
+
+          // Add value to dataset
+          // @ts-expect-error
+          dataset.value.add(valueDataset.value);
         }
+
+        // Otherwise, add set issue
+      } else {
+        _addIssue(this, 'type', dataset, config);
       }
 
-      // Throw error if there are issues
-      if (issues.length) {
-        throw new ValiError(issues as Issues);
-      }
-
-      // Execute pipe and return output
-      return executePipe(output, pipe, { ...info, reason: 'set' });
+      // Return output dataset
+      // @ts-expect-error
+      return dataset as OutputDataset<
+        Set<unknown>,
+        SetIssue | BaseIssue<unknown>
+      >;
     },
   };
 }
