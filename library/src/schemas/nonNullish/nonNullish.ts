@@ -1,75 +1,108 @@
-import { ValiError } from '../../error/index.ts';
-import type { BaseSchema, Input, Output } from '../../types.ts';
+import type {
+  BaseIssue,
+  BaseSchema,
+  ErrorMessage,
+  OutputDataset,
+} from '../../types/index.ts';
+import { _addIssue, _getStandardProps } from '../../utils/index.ts';
+import type {
+  InferNonNullishInput,
+  InferNonNullishIssue,
+  InferNonNullishOutput,
+  NonNullishIssue,
+} from './types.ts';
 
 /**
- * Non nullish type.
+ * Non nullish schema interface.
  */
-export type NonNullish<T> = T extends null | undefined ? never : T;
-
-/**
- * Non nullish schema type.
- */
-export type NonNullishSchema<
-  TWrappedSchema extends BaseSchema,
-  TOutput = NonNullish<Output<TWrappedSchema>>
-> = BaseSchema<NonNullish<Input<TWrappedSchema>>, TOutput> & {
-  schema: 'non_nullish';
-  wrapped: TWrappedSchema;
-};
+export interface NonNullishSchema<
+  TWrapped extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  TMessage extends ErrorMessage<NonNullishIssue> | undefined,
+> extends BaseSchema<
+    InferNonNullishInput<TWrapped>,
+    InferNonNullishOutput<TWrapped>,
+    NonNullishIssue | InferNonNullishIssue<TWrapped>
+  > {
+  /**
+   * The schema type.
+   */
+  readonly type: 'non_nullish';
+  /**
+   * The schema reference.
+   */
+  readonly reference: typeof nonNullish;
+  /**
+   * The expected property.
+   */
+  readonly expects: '(!null & !undefined)';
+  /**
+   * The wrapped schema.
+   */
+  readonly wrapped: TWrapped;
+  /**
+   * The error message.
+   */
+  readonly message: TMessage;
+}
 
 /**
  * Creates a non nullish schema.
  *
  * @param wrapped The wrapped schema.
- * @param error The error message.
  *
  * @returns A non nullish schema.
  */
-export function nonNullish<TWrappedSchema extends BaseSchema>(
-  wrapped: TWrappedSchema,
-  error?: string
-): NonNullishSchema<TWrappedSchema> {
+export function nonNullish<
+  const TWrapped extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+>(wrapped: TWrapped): NonNullishSchema<TWrapped, undefined>;
+
+/**
+ * Creates a non nullish schema.
+ *
+ * @param wrapped The wrapped schema.
+ * @param message The error message.
+ *
+ * @returns A non nullish schema.
+ */
+export function nonNullish<
+  const TWrapped extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  const TMessage extends ErrorMessage<NonNullishIssue> | undefined,
+>(wrapped: TWrapped, message: TMessage): NonNullishSchema<TWrapped, TMessage>;
+
+// @__NO_SIDE_EFFECTS__
+export function nonNullish(
+  wrapped: BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  message?: ErrorMessage<NonNullishIssue> | undefined
+): NonNullishSchema<
+  BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  ErrorMessage<NonNullishIssue> | undefined
+> {
   return {
-    /**
-     * The schema type.
-     */
-    schema: 'non_nullish',
-
-    /**
-     * The wrapped schema.
-     */
-    wrapped,
-
-    /**
-     * Whether it's async.
-     */
+    kind: 'schema',
+    type: 'non_nullish',
+    reference: nonNullish,
+    expects: '(!null & !undefined)',
     async: false,
-
-    /**
-     * Parses unknown input based on its schema.
-     *
-     * @param input The input to be parsed.
-     * @param info The parse info.
-     *
-     * @returns The parsed output.
-     */
-    parse(input, info) {
-      // Allow `null` and `undefined` values not to pass
-      if (input === null || input === undefined) {
-        throw new ValiError([
-          {
-            reason: 'type',
-            validation: 'non_nullish',
-            origin: 'value',
-            message: error || 'Invalid type',
-            input,
-            ...info,
-          },
-        ]);
+    wrapped,
+    message,
+    get '~standard'() {
+      return _getStandardProps(this);
+    },
+    '~run'(dataset, config) {
+      // If value is not `null` and `undefined`, run wrapped schema
+      if (!(dataset.value === null || dataset.value === undefined)) {
+        // @ts-expect-error
+        dataset = this.wrapped['~run'](dataset, config);
       }
 
-      // Parse wrapped schema and return output
-      return wrapped.parse(input, info);
+      // If value is `null` or `undefined`, add issue to dataset
+      if (dataset.value === null || dataset.value === undefined) {
+        _addIssue(this, 'type', dataset, config);
+      }
+
+      // Return output dataset
+      // @ts-expect-error
+      return dataset as OutputDataset<unknown, BaseIssue<unknown>>;
     },
   };
 }

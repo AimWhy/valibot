@@ -1,225 +1,238 @@
-import { type Issue, type Issues, ValiError } from '../../error/index.ts';
-import type { BaseSchema, Pipe } from '../../types.ts';
+import type {
+  BaseIssue,
+  BaseSchema,
+  ErrorMessage,
+  InferIssue,
+  ObjectPathItem,
+  OutputDataset,
+} from '../../types/index.ts';
 import {
-  executePipe,
-  getCurrentPath,
-  getErrorAndPipe,
+  _addIssue,
+  _getStandardProps,
+  _isValidObjectKey,
 } from '../../utils/index.ts';
-import { type StringSchema, string } from '../string/index.ts';
-import type { RecordOutput, RecordInput } from './types.ts';
-import { BLOCKED_KEYS } from './values.ts';
+import type {
+  InferRecordInput,
+  InferRecordOutput,
+  RecordIssue,
+} from './types.ts';
 
 /**
- * Record key type.
+ * Record schema interface.
  */
-export type RecordKey = StringSchema<string | number | symbol>;
-
-/**
- * Record schema type.
- */
-export type RecordSchema<
-  TRecordValue extends BaseSchema,
-  TRecordKey extends RecordKey = StringSchema,
-  TOutput = RecordOutput<TRecordKey, TRecordValue>
-> = BaseSchema<RecordInput<TRecordKey, TRecordValue>, TOutput> & {
-  schema: 'record';
-  record: { key: TRecordKey; value: TRecordValue };
-};
-
-/**
- * Creates a record schema.
- *
- * @param value The value schema.
- * @param pipe A validation and transformation pipe.
- *
- * @returns A record schema.
- */
-export function record<TRecordValue extends BaseSchema>(
-  value: TRecordValue,
-  pipe?: Pipe<RecordOutput<StringSchema, TRecordValue>>
-): RecordSchema<TRecordValue>;
-
-/**
- * Creates a record schema.
- *
- * @param value The value schema.
- * @param error The error message.
- * @param pipe A validation and transformation pipe.
- *
- * @returns A record schema.
- */
-export function record<TRecordValue extends BaseSchema>(
-  value: TRecordValue,
-  error?: string,
-  pipe?: Pipe<RecordOutput<StringSchema, TRecordValue>>
-): RecordSchema<TRecordValue>;
+export interface RecordSchema<
+  TKey extends BaseSchema<string, string | number | symbol, BaseIssue<unknown>>,
+  TValue extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  TMessage extends ErrorMessage<RecordIssue> | undefined,
+> extends BaseSchema<
+    InferRecordInput<TKey, TValue>,
+    InferRecordOutput<TKey, TValue>,
+    RecordIssue | InferIssue<TKey> | InferIssue<TValue>
+  > {
+  /**
+   * The schema type.
+   */
+  readonly type: 'record';
+  /**
+   * The schema reference.
+   */
+  readonly reference: typeof record;
+  /**
+   * The expected property.
+   */
+  readonly expects: 'Object';
+  /**
+   * The record key schema.
+   */
+  readonly key: TKey;
+  /**
+   * The record value schema.
+   */
+  readonly value: TValue;
+  /**
+   * The error message.
+   */
+  readonly message: TMessage;
+}
 
 /**
  * Creates a record schema.
  *
  * @param key The key schema.
  * @param value The value schema.
- * @param pipe A validation and transformation pipe.
  *
  * @returns A record schema.
  */
 export function record<
-  TRecordKey extends RecordKey,
-  TRecordValue extends BaseSchema
->(
-  key: TRecordKey,
-  value: TRecordValue,
-  pipe?: Pipe<RecordOutput<TRecordKey, TRecordValue>>
-): RecordSchema<TRecordValue, TRecordKey>;
+  const TKey extends BaseSchema<
+    string,
+    string | number | symbol,
+    BaseIssue<unknown>
+  >,
+  const TValue extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+>(key: TKey, value: TValue): RecordSchema<TKey, TValue, undefined>;
 
 /**
  * Creates a record schema.
  *
  * @param key The key schema.
  * @param value The value schema.
- * @param error The error message.
- * @param pipe A validation and transformation pipe.
+ * @param message The error message.
  *
  * @returns A record schema.
  */
 export function record<
-  TRecordKey extends RecordKey,
-  TRecordValue extends BaseSchema
+  const TKey extends BaseSchema<
+    string,
+    string | number | symbol,
+    BaseIssue<unknown>
+  >,
+  const TValue extends BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  const TMessage extends ErrorMessage<RecordIssue> | undefined,
 >(
-  key: TRecordKey,
-  value: TRecordValue,
-  error?: string,
-  pipe?: Pipe<RecordOutput<TRecordKey, TRecordValue>>
-): RecordSchema<TRecordValue, TRecordKey>;
+  key: TKey,
+  value: TValue,
+  message: TMessage
+): RecordSchema<TKey, TValue, TMessage>;
 
-export function record<
-  TRecordKey extends RecordKey,
-  TRecordValue extends BaseSchema
->(
-  arg1: TRecordValue | TRecordKey,
-  arg2?: Pipe<RecordOutput<TRecordKey, TRecordValue>> | string | TRecordValue,
-  arg3?: Pipe<RecordOutput<TRecordKey, TRecordValue>> | string,
-  arg4?: Pipe<RecordOutput<TRecordKey, TRecordValue>>
-): RecordSchema<TRecordValue, TRecordKey> {
-  // Get key, value, error and pipe argument
-  const { key, value, error, pipe } = (
-    typeof arg2 === 'object' && !Array.isArray(arg2)
-      ? { key: arg1, value: arg2, ...getErrorAndPipe(arg3, arg4) }
-      : { key: string(), value: arg1, ...getErrorAndPipe(arg2, arg3 as any) }
-  ) as {
-    key: TRecordKey;
-    value: TRecordValue;
-    error: string | undefined;
-    pipe: Pipe<RecordOutput<TRecordKey, TRecordValue>>;
-  };
-
-  // Create and return record schema
+// @__NO_SIDE_EFFECTS__
+export function record(
+  key: BaseSchema<string, string | number | symbol, BaseIssue<unknown>>,
+  value: BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  message?: ErrorMessage<RecordIssue>
+): RecordSchema<
+  BaseSchema<string, string | number | symbol, BaseIssue<unknown>>,
+  BaseSchema<unknown, unknown, BaseIssue<unknown>>,
+  ErrorMessage<RecordIssue> | undefined
+> {
   return {
-    /**
-     * The schema type.
-     */
-    schema: 'record',
-
-    /**
-     * The record key and value schema.
-     */
-    record: { key, value },
-
-    /**
-     * Whether it's async.
-     */
+    kind: 'schema',
+    type: 'record',
+    reference: record,
+    expects: 'Object',
     async: false,
+    key,
+    value,
+    message,
+    get '~standard'() {
+      return _getStandardProps(this);
+    },
+    '~run'(dataset, config) {
+      // Get input value from dataset
+      const input = dataset.value;
 
-    /**
-     * Parses unknown input based on its schema.
-     *
-     * @param input The input to be parsed.
-     * @param info The parse info.
-     *
-     * @returns The parsed output.
-     */
-    parse(input, info) {
-      // Check type of input
-      if (
-        !input ||
-        typeof input !== 'object' ||
-        input.toString() !== '[object Object]'
-      ) {
-        throw new ValiError([
-          {
-            reason: 'type',
-            validation: 'record',
-            origin: 'value',
-            message: error || 'Invalid type',
-            input,
-            ...info,
-          },
-        ]);
-      }
+      // If root type is valid, check nested types
+      if (input && typeof input === 'object') {
+        // Set typed to `true` and value to empty object
+        // @ts-expect-error
+        dataset.typed = true;
+        dataset.value = {};
 
-      // Create output and issues
-      const output: Record<string | number | symbol, any> = {};
-      const issues: Issue[] = [];
+        // Parse schema of each record entry
+        // Hint: for...in loop always returns keys as strings
+        // Hint: We exclude specific keys for security reasons
+        for (const entryKey in input) {
+          if (_isValidObjectKey(input, entryKey)) {
+            // Get value of record entry
+            const entryValue: unknown = input[entryKey as keyof typeof input];
 
-      // Parse each key and value by schema
-      // Note: `Object.entries(...)` converts each key to a string
-      Object.entries(input).forEach(([inputKey, inputValue]) => {
-        // Exclude blocked keys to prevent prototype pollutions
-        if (!BLOCKED_KEYS.has(inputKey)) {
-          // Get current path
-          const path = getCurrentPath(info, {
-            schema: 'record',
-            input,
-            key: inputKey,
-            value: inputValue,
-          });
+            // Get dataset of key schema
+            const keyDataset = this.key['~run']({ value: entryKey }, config);
 
-          // Parse key and get output
-          let outputKey: string | number | symbol | undefined;
-          try {
-            outputKey = key.parse(inputKey, { ...info, origin: 'key', path });
+            // If there are issues, capture them
+            if (keyDataset.issues) {
+              // Create record path item
+              const pathItem: ObjectPathItem = {
+                type: 'object',
+                origin: 'key',
+                input: input as Record<string, unknown>,
+                key: entryKey,
+                value: entryValue,
+              };
 
-            // Throw or fill issues in case of an error
-          } catch (error) {
-            if (info?.abortEarly) {
-              throw error;
+              // Add modified item dataset issues to issues
+              for (const issue of keyDataset.issues) {
+                // @ts-expect-error
+                issue.path = [pathItem];
+                // @ts-expect-error
+                dataset.issues?.push(issue);
+              }
+              if (!dataset.issues) {
+                // @ts-expect-error
+                dataset.issues = keyDataset.issues;
+              }
+
+              // If necessary, abort early
+              if (config.abortEarly) {
+                dataset.typed = false;
+                break;
+              }
             }
-            issues.push(...(error as ValiError).issues);
-          }
 
-          // Parse value and get output
-          let outputValue: [any] | undefined;
-          try {
-            // Note: Value is nested in array, so that also a falsy value further
-            // down can be recognized as valid value
-            outputValue = [value.parse(inputValue, { ...info, path })];
+            // Get dataset of value schema
+            const valueDataset = this.value['~run'](
+              { value: entryValue },
+              config
+            );
 
-            // Throw or fill issues in case of an error
-          } catch (error) {
-            if (info?.abortEarly) {
-              throw error;
+            // If there are issues, capture them
+            if (valueDataset.issues) {
+              // Create record path item
+              const pathItem: ObjectPathItem = {
+                type: 'object',
+                origin: 'value',
+                input: input as Record<string, unknown>,
+                key: entryKey,
+                value: entryValue,
+              };
+
+              // Add modified item dataset issues to issues
+              for (const issue of valueDataset.issues) {
+                if (issue.path) {
+                  issue.path.unshift(pathItem);
+                } else {
+                  // @ts-expect-error
+                  issue.path = [pathItem];
+                }
+                // @ts-expect-error
+                dataset.issues?.push(issue);
+              }
+              if (!dataset.issues) {
+                // @ts-expect-error
+                dataset.issues = valueDataset.issues;
+              }
+
+              // If necessary, abort early
+              if (config.abortEarly) {
+                dataset.typed = false;
+                break;
+              }
             }
-            issues.push(...(error as ValiError).issues);
-          }
 
-          // Set entry if output key and value is valid
-          if (outputKey && outputValue) {
-            output[outputKey] = outputValue[0];
+            // If not typed, set typed to `false`
+            if (!keyDataset.typed || !valueDataset.typed) {
+              dataset.typed = false;
+            }
+
+            // If key is typed, add entry to dataset
+            if (keyDataset.typed) {
+              // @ts-expect-error
+              dataset.value[keyDataset.value] = valueDataset.value;
+            }
           }
         }
-      });
 
-      // Throw error if there are issues
-      if (issues.length) {
-        throw new ValiError(issues as Issues);
+        // Otherwise, add record issue
+      } else {
+        _addIssue(this, 'type', dataset, config);
       }
 
-      // Execute pipe and return output
-      return executePipe(
-        output as RecordOutput<TRecordKey, TRecordValue>,
-        pipe,
-        { ...info, reason: 'record' }
-      );
+      // Return output dataset
+      // @ts-expect-error
+      return dataset as OutputDataset<
+        Record<string | number | symbol, unknown>,
+        RecordIssue | BaseIssue<unknown>
+      >;
     },
   };
 }

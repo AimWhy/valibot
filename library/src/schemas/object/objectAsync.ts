@@ -1,150 +1,241 @@
-import { type Issue, type Issues, ValiError } from '../../error/index.ts';
-import type { BaseSchema, BaseSchemaAsync, PipeAsync } from '../../types.ts';
-import {
-  executePipeAsync,
-  getCurrentPath,
-  getErrorAndPipe,
-} from '../../utils/index.ts';
-import type { ObjectInput, ObjectOutput } from './types.ts';
+import { getDefault, getFallback } from '../../methods/index.ts';
+import type {
+  BaseSchemaAsync,
+  ErrorMessage,
+  InferObjectInput,
+  InferObjectIssue,
+  InferObjectOutput,
+  ObjectEntriesAsync,
+  ObjectPathItem,
+  OutputDataset,
+} from '../../types/index.ts';
+import { _addIssue, _getStandardProps } from '../../utils/index.ts';
+import type { object } from './object.ts';
+import type { ObjectIssue } from './types.ts';
 
 /**
- * Object shape async type.
+ * Object schema async interface.
  */
-export type ObjectShapeAsync = Record<
-  string,
-  BaseSchema<any> | BaseSchemaAsync<any>
->;
+export interface ObjectSchemaAsync<
+  TEntries extends ObjectEntriesAsync,
+  TMessage extends ErrorMessage<ObjectIssue> | undefined,
+> extends BaseSchemaAsync<
+    InferObjectInput<TEntries>,
+    InferObjectOutput<TEntries>,
+    ObjectIssue | InferObjectIssue<TEntries>
+  > {
+  /**
+   * The schema type.
+   */
+  readonly type: 'object';
+  /**
+   * The schema reference.
+   */
+  readonly reference: typeof object | typeof objectAsync;
+  /**
+   * The expected property.
+   */
+  readonly expects: 'Object';
+  /**
+   * The entries schema.
+   */
+  readonly entries: TEntries;
+  /**
+   * The error message.
+   */
+  readonly message: TMessage;
+}
 
 /**
- * Object schema async type.
+ * Creates an object schema.
+ *
+ * Hint: This schema removes unknown entries. The output will only include the
+ * entries you specify. To include unknown entries, use `looseObjectAsync`. To
+ * return an issue for unknown entries, use `strictObjectAsync`. To include and
+ * validate unknown entries, use `objectWithRestAsync`.
+ *
+ * @param entries The entries schema.
+ *
+ * @returns An object schema.
  */
-export type ObjectSchemaAsync<
-  TObjectShape extends ObjectShapeAsync,
-  TOutput = ObjectOutput<TObjectShape>
-> = BaseSchemaAsync<ObjectInput<TObjectShape>, TOutput> & {
-  schema: 'object';
-  object: TObjectShape;
-};
+export function objectAsync<const TEntries extends ObjectEntriesAsync>(
+  entries: TEntries
+): ObjectSchemaAsync<TEntries, undefined>;
 
 /**
- * Creates an async object schema.
+ * Creates an object schema.
  *
- * @param object The object schema.
- * @param pipe A validation and transformation pipe.
+ * Hint: This schema removes unknown entries. The output will only include the
+ * entries you specify. To include unknown entries, use `looseObjectAsync`. To
+ * return an issue for unknown entries, use `strictObjectAsync`. To include and
+ * validate unknown entries, use `objectWithRestAsync`.
  *
- * @returns An async object schema.
+ * @param entries The entries schema.
+ * @param message The error message.
+ *
+ * @returns An object schema.
  */
-export function objectAsync<TObjectShape extends ObjectShapeAsync>(
-  object: TObjectShape,
-  pipe?: PipeAsync<ObjectOutput<TObjectShape>>
-): ObjectSchemaAsync<TObjectShape>;
+export function objectAsync<
+  const TEntries extends ObjectEntriesAsync,
+  const TMessage extends ErrorMessage<ObjectIssue> | undefined,
+>(entries: TEntries, message: TMessage): ObjectSchemaAsync<TEntries, TMessage>;
 
-/**
- * Creates an async object schema.
- *
- * @param object The object schema.
- * @param error The error message.
- * @param pipe A validation and transformation pipe.
- *
- * @returns An async object schema.
- */
-export function objectAsync<TObjectShape extends ObjectShapeAsync>(
-  object: TObjectShape,
-  error?: string,
-  pipe?: PipeAsync<ObjectOutput<TObjectShape>>
-): ObjectSchemaAsync<TObjectShape>;
-
-export function objectAsync<TObjectShape extends ObjectShapeAsync>(
-  object: TObjectShape,
-  arg2?: PipeAsync<ObjectOutput<TObjectShape>> | string,
-  arg3?: PipeAsync<ObjectOutput<TObjectShape>>
-): ObjectSchemaAsync<TObjectShape> {
-  // Get error and pipe argument
-  const { error, pipe } = getErrorAndPipe(arg2, arg3);
-
-  // Create and return async object schema
+// @__NO_SIDE_EFFECTS__
+export function objectAsync(
+  entries: ObjectEntriesAsync,
+  message?: ErrorMessage<ObjectIssue>
+): ObjectSchemaAsync<
+  ObjectEntriesAsync,
+  ErrorMessage<ObjectIssue> | undefined
+> {
   return {
-    /**
-     * The schema type.
-     */
-    schema: 'object',
-
-    /**
-     * The object schema.
-     */
-    object,
-
-    /**
-     * Whether it's async.
-     */
+    kind: 'schema',
+    type: 'object',
+    reference: objectAsync,
+    expects: 'Object',
     async: true,
+    entries,
+    message,
+    get '~standard'() {
+      return _getStandardProps(this);
+    },
+    async '~run'(dataset, config) {
+      // Get input value from dataset
+      const input = dataset.value;
 
-    /**
-     * Parses unknown input based on its schema.
-     *
-     * @param input The input to be parsed.
-     * @param info The parse info.
-     *
-     * @returns The parsed output.
-     */
-    async parse(input, info) {
-      // Check type of input
-      if (
-        !input ||
-        typeof input !== 'object' ||
-        input.toString() !== '[object Object]'
-      ) {
-        throw new ValiError([
-          {
-            reason: 'type',
-            validation: 'object',
-            origin: 'value',
-            message: error || 'Invalid type',
-            input,
-            ...info,
-          },
-        ]);
-      }
+      // If root type is valid, check nested types
+      if (input && typeof input === 'object') {
+        // Set typed to `true` and value to blank object
+        // @ts-expect-error
+        dataset.typed = true;
+        dataset.value = {};
 
-      // Create output and issues
-      const output: Record<string, any> = {};
-      const issues: Issue[] = [];
-
-      // Parse schema of each key
-      await Promise.all(
-        Object.entries(object).map(async ([key, schema]) => {
-          try {
-            const value = (input as Record<string, unknown>)[key];
-            output[key] = await schema.parse(value, {
-              ...info,
-              path: getCurrentPath(info, {
-                schema: 'object',
-                input,
+        // If key is present or its an optional schema with a default value,
+        // parse input of key or default value asynchronously
+        const valueDatasets = await Promise.all(
+          Object.entries(this.entries).map(async ([key, valueSchema]) => {
+            if (
+              key in input ||
+              ((valueSchema.type === 'exact_optional' ||
+                valueSchema.type === 'optional' ||
+                valueSchema.type === 'nullish') &&
+                // @ts-expect-error
+                valueSchema.default !== undefined)
+            ) {
+              const value: unknown =
+                key in input
+                  ? // @ts-expect-error
+                    input[key]
+                  : await getDefault(valueSchema);
+              return [
                 key,
                 value,
-              }),
+                valueSchema,
+                await valueSchema['~run']({ value }, config),
+              ] as const;
+            }
+            return [
+              key,
+              // @ts-expect-error
+              input[key] as unknown,
+              valueSchema,
+              null,
+            ] as const;
+          })
+        );
+
+        // Process each object entry of schema
+        for (const [key, value, valueSchema, valueDataset] of valueDatasets) {
+          // If key is present or its an optional schema with a default value,
+          // process its value dataset
+          if (valueDataset) {
+            // If there are issues, capture them
+            if (valueDataset.issues) {
+              // Create object path item
+              const pathItem: ObjectPathItem = {
+                type: 'object',
+                origin: 'value',
+                input: input as Record<string, unknown>,
+                key,
+                value,
+              };
+
+              // Add modified entry dataset issues to issues
+              for (const issue of valueDataset.issues) {
+                if (issue.path) {
+                  issue.path.unshift(pathItem);
+                } else {
+                  // @ts-expect-error
+                  issue.path = [pathItem];
+                }
+                // @ts-expect-error
+                dataset.issues?.push(issue);
+              }
+              if (!dataset.issues) {
+                // @ts-expect-error
+                dataset.issues = valueDataset.issues;
+              }
+
+              // If necessary, abort early
+              if (config.abortEarly) {
+                dataset.typed = false;
+                break;
+              }
+            }
+
+            // If not typed, set typed to `false`
+            if (!valueDataset.typed) {
+              dataset.typed = false;
+            }
+
+            // Add entry to dataset
+            // @ts-expect-error
+            dataset.value[key] = valueDataset.value;
+
+            // Otherwise, if key is missing but has a fallback, use it
+            // @ts-expect-error
+          } else if (valueSchema.fallback !== undefined) {
+            // @ts-expect-error
+            dataset.value[key] = await getFallback(valueSchema);
+
+            // Otherwise, if key is missing and required, add issue
+          } else if (
+            valueSchema.type !== 'exact_optional' &&
+            valueSchema.type !== 'optional' &&
+            valueSchema.type !== 'nullish'
+          ) {
+            _addIssue(this, 'key', dataset, config, {
+              input: undefined,
+              expected: `"${key}"`,
+              path: [
+                {
+                  type: 'object',
+                  origin: 'key',
+                  input: input as Record<string, unknown>,
+                  key,
+                  value,
+                },
+              ],
             });
 
-            // Throw or fill issues in case of an error
-          } catch (error) {
-            if (info?.abortEarly) {
-              throw error;
+            // If necessary, abort early
+            if (config.abortEarly) {
+              break;
             }
-            issues.push(...(error as ValiError).issues);
           }
-        })
-      );
+        }
 
-      // Throw error if there are issues
-      if (issues.length) {
-        throw new ValiError(issues as Issues);
+        // Otherwise, add object issue
+      } else {
+        _addIssue(this, 'type', dataset, config);
       }
 
-      // Execute pipe and return output
-      return executePipeAsync(output as ObjectOutput<TObjectShape>, pipe, {
-        ...info,
-        reason: 'object',
-      });
+      // Return output dataset
+      // @ts-expect-error
+      return dataset as OutputDataset<
+        InferObjectOutput<ObjectEntriesAsync>,
+        ObjectIssue | InferObjectIssue<ObjectEntriesAsync>
+      >;
     },
   };
 }
